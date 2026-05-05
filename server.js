@@ -6,13 +6,15 @@ const multer = require('multer');
 const app = express();
 const port = process.env.PORT || 3000;
 
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
-const REPORTS_DIR = path.join(__dirname, 'reports');
+const baseDir = process.env.VERCEL ? '/tmp' : process.cwd();
+const UPLOADS_DIR = path.join(baseDir, 'uploads');
+const RECORDINGS_DIR = path.join(baseDir, 'recordings');
+const REPORTS_DIR = path.join(baseDir, 'reports');
 
-for (const dir of [UPLOADS_DIR, REPORTS_DIR]) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+function ensureStorageDirs() {
+  fs.mkdirSync(path.join(baseDir, 'uploads'), { recursive: true });
+  fs.mkdirSync(path.join(baseDir, 'recordings'), { recursive: true });
+  fs.mkdirSync(path.join(baseDir, 'reports'), { recursive: true });
 }
 
 const DEFAULT_PROMPT = `Você é um especialista em pedagogia da dança, gestão de professores e análise de comportamento em sala de aula. Analise a aula inteira considerando o Perfil Professor DK.
@@ -52,7 +54,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 const allowedExtensions = new Set(['.mp4', '.mov', '.avi']);
 
 const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, UPLOADS_DIR),
+  destination: (_, __, cb) => {
+    try {
+      ensureStorageDirs();
+      cb(null, UPLOADS_DIR);
+    } catch (error) {
+      cb(error);
+    }
+  },
   filename: (_, file, cb) => {
     const safeName = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
     cb(null, `${Date.now()}_${safeName}`);
@@ -106,6 +115,7 @@ async function analyzeVideo(filePath, metadata, customPrompt) {
 }
 
 async function persistReport(report) {
+  ensureStorageDirs();
   const reportId = `report_${Date.now()}`;
   const outputPath = path.join(REPORTS_DIR, `${reportId}.json`);
   fs.writeFileSync(outputPath, JSON.stringify({ reportId, ...report }, null, 2), 'utf-8');
@@ -118,6 +128,8 @@ app.get('/api/default-prompt', (_req, res) => {
 
 app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
   try {
+    ensureStorageDirs();
+
     if (!req.file) {
       return res.status(400).json({ error: 'Envie um arquivo de vídeo.' });
     }
@@ -139,14 +151,16 @@ app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
       uploadedFile: path.relative(__dirname, req.file.path)
     });
   } catch (error) {
-    res.status(400).json({ error: error.message || 'Falha ao analisar vídeo enviado.' });
+    res.status(400).json({ error: 'Erro ao processar upload', details: error.message });
   }
 });
 
 app.post('/api/analyze/recorded', async (req, res) => {
   try {
+    ensureStorageDirs();
+
     const { rtspUrl, filePath, professor, turma, sala, customPrompt } = req.body;
-    const resolvedFile = filePath || null;
+    const resolvedFile = filePath ? path.join(RECORDINGS_DIR, path.basename(filePath)) : null;
 
     if (!resolvedFile) {
       return res.status(400).json({
