@@ -26,6 +26,7 @@ async function loadDefaultPrompt() {
   const data = await resp.json();
   document.getElementById('recordPrompt').value = data.defaultPrompt;
   document.getElementById('uploadPrompt').value = data.defaultPrompt;
+  document.getElementById('drivePrompt').value = data.defaultPrompt;
 }
 
 document.getElementById('startRecording').addEventListener('click', async () => {
@@ -67,6 +68,38 @@ document.getElementById('analyzeUpload').addEventListener('click', async () => {
   }
 
   setStatus('uploadStatus', `Relatório gerado: ${data.reportId}`);
+  showReport(data);
+});
+
+
+document.getElementById('analyzeDrive').addEventListener('click', async () => {
+  const driveUrl = document.getElementById('driveUrl').value.trim();
+  if (!driveUrl) {
+    setStatus('driveStatus', 'Informe o link do Google Drive.');
+    return;
+  }
+
+  setStatus('driveStatus', 'Baixando vídeo do Drive e analisando...');
+
+  const resp = await fetch('/api/analyze/drive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      driveUrl,
+      professor: document.getElementById('driveProfessor').value,
+      turma: document.getElementById('driveTurma').value,
+      sala: document.getElementById('driveSala').value,
+      prompt: document.getElementById('drivePrompt').value
+    })
+  });
+
+  const data = await resp.json();
+  if (!resp.ok) {
+    setStatus('driveStatus', data.error || 'Falha ao analisar vídeo do Drive.');
+    return;
+  }
+
+  setStatus('driveStatus', `Análise concluída (${data.fileSizeMB} MB).`);
   showReport(data);
 });
 
