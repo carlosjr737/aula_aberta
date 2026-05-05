@@ -52,6 +52,7 @@ app.use('/reports', express.static(REPORTS_DIR));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const allowedExtensions = new Set(['.mp4', '.mov', '.avi']);
+const MIN_FILE_SIZE_BYTES = 1 * 1024 * 1024;
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => {
@@ -80,38 +81,72 @@ const upload = multer({
 });
 
 async function analyzeVideo(filePath, metadata, customPrompt) {
-  // Aqui entraria a chamada real da Gemini API enviando:
-  // 1) arquivo de vídeo
-  // 2) customPrompt
-  // 3) metadata (professor, turma, sala)
-  const mockScore = (Math.random() * 2 + 8).toFixed(1);
+  if (!process.env.GEMINI_API_KEY) {
+    const error = new Error('GEMINI_API_KEY não configurada. A análise real não foi executada.');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const mimeByExt = {
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.avi': 'video/x-msvideo'
+  };
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeType = mimeByExt[ext] || 'application/octet-stream';
+  const videoBuffer = fs.readFileSync(filePath);
+  const fileBase64 = videoBuffer.toString('base64');
+
+  console.log(`Vídeo recebido: ${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB`);
+  console.log('Enviando para Gemini...');
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const geminiResponse = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: `${customPrompt}\n\nMetadata da aula: ${JSON.stringify(metadata)}` },
+            { inlineData: { mimeType, data: fileBase64 } }
+          ]
+        }
+      ]
+    })
+  });
+
+  const payload = await geminiResponse.json();
+  if (!geminiResponse.ok) {
+    const error = new Error(payload?.error?.message || 'Falha na Gemini API.');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const answer = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('\n').trim();
+  if (!answer) {
+    const error = new Error('Resposta vazia da Gemini API.');
+    error.statusCode = 500;
+    throw error;
+  }
+  console.log('Resposta Gemini recebida.');
 
   return {
-    resumoGeral: `Aula do professor(a) ${metadata.professor} com turma ${metadata.turma} analisada com base no Perfil Professor DK.`,
-    pontosFortes: [
-      'Boa condução da turma e energia consistente.',
-      'Bom equilíbrio entre explicação e prática.'
-    ],
-    pontosDeMelhoria: [
-      'Aumentar o número de correções individuais.',
-      'Variar estratégias de engajamento nos momentos finais.'
-    ],
-    energiaEPresenca: 'Energia positiva e presença ativa durante a maior parte da aula.',
-    clarezaDaConducao: 'Comandos diretos e objetivos, com boa progressão de blocos.',
-    interacaoComAlunos: 'Interação frequente, com incentivo coletivo e validação de esforço.',
-    explicacaoVsPratica: 'Transição rápida para prática após explicações iniciais.',
-    correcoesRealizadas: 'Foram observadas correções coletivas e algumas intervenções pontuais.',
-    alinhamentoPerfilDK: 'Alinhamento alto com o Perfil Professor DK, especialmente em energia e condução.',
-    notaGeral: Number(mockScore),
-    recomendacoes: [
-      'Planejar 2 checkpoints para feedback individual por bloco.',
-      'Definir objetivo técnico único por sequência para maior foco.'
-    ],
+    provider: 'gemini',
+    rawResponse: answer,
     promptUsado: customPrompt,
     metadata,
     filePath,
     analyzedAt: new Date().toISOString()
   };
+}
+
+function getFileInspection(filePath) {
+  const fileExists = !!filePath && fs.existsSync(filePath);
+  const fileSizeBytes = fileExists ? fs.statSync(filePath).size : 0;
+  const fileSizeMB = Number((fileSizeBytes / (1024 * 1024)).toFixed(2));
+  return { fileExists, fileSizeBytes, fileSizeMB };
 }
 
 async function persistReport(report) {
@@ -141,6 +176,17 @@ app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
     };
     const customPrompt = req.body.customPrompt || DEFAULT_PROMPT;
 
+    const fileInfo = getFileInspection(req.file.path);
+    if (!fileInfo.fileExists || fileInfo.fileSizeBytes <= MIN_FILE_SIZE_BYTES) {
+      return res.status(400).json({
+        error: 'Arquivo de vídeo inválido. O arquivo deve existir e ter tamanho maior que 1MB.',
+        fileExists: fileInfo.fileExists,
+        fileSizeMB: fileInfo.fileSizeMB,
+        usedRealAI: false,
+        provider: 'gemini'
+      });
+    }
+
     const report = await analyzeVideo(req.file.path, metadata, customPrompt);
     const { reportId, outputPath } = await persistReport(report);
 
@@ -148,10 +194,19 @@ app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
       reportId,
       report,
       reportFile: path.relative(__dirname, outputPath),
-      uploadedFile: path.relative(__dirname, req.file.path)
+      uploadedFile: path.relative(__dirname, req.file.path),
+      fileExists: fileInfo.fileExists,
+      fileSizeMB: fileInfo.fileSizeMB,
+      usedRealAI: true,
+      provider: 'gemini'
     });
   } catch (error) {
-    res.status(400).json({ error: 'Erro ao processar upload', details: error.message });
+    const statusCode = error.statusCode || 400;
+    res.status(statusCode).json({
+      error: error.message || 'Erro ao processar upload',
+      usedRealAI: false,
+      provider: 'gemini'
+    });
   }
 });
 
@@ -168,13 +223,36 @@ app.post('/api/analyze/recorded', async (req, res) => {
       });
     }
 
+    const fileInfo = getFileInspection(resolvedFile);
+    if (!fileInfo.fileExists || fileInfo.fileSizeBytes <= MIN_FILE_SIZE_BYTES) {
+      return res.status(400).json({
+        error: 'Arquivo de vídeo inválido. O arquivo deve existir e ter tamanho maior que 1MB.',
+        fileExists: fileInfo.fileExists,
+        fileSizeMB: fileInfo.fileSizeMB,
+        usedRealAI: false,
+        provider: 'gemini'
+      });
+    }
+
     const metadata = { professor: professor || '', turma: turma || '', sala: sala || '', rtspUrl: rtspUrl || '' };
     const report = await analyzeVideo(resolvedFile, metadata, customPrompt || DEFAULT_PROMPT);
     const { reportId, outputPath } = await persistReport(report);
 
-    res.json({ reportId, report, reportFile: path.relative(__dirname, outputPath) });
+    res.json({
+      reportId,
+      report,
+      reportFile: path.relative(__dirname, outputPath),
+      fileExists: fileInfo.fileExists,
+      fileSizeMB: fileInfo.fileSizeMB,
+      usedRealAI: true,
+      provider: 'gemini'
+    });
   } catch (error) {
-    res.status(400).json({ error: error.message || 'Falha ao analisar gravação.' });
+    res.status(error.statusCode || 400).json({
+      error: error.message || 'Falha ao analisar gravação.',
+      usedRealAI: false,
+      provider: 'gemini'
+    });
   }
 });
 
