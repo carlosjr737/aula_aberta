@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DK Aula IA MVP</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>DK Aula IA — MVP</h1>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="record">Gravar aula</button>
+      <button class="tab" data-tab="upload">Enviar vídeo</button>
+    </div>
+
+    <section id="record" class="panel active">
+      <label>URL RTSP <input id="rtspUrl" type="text" placeholder="rtsp://..." /></label>
+      <label>Professor <input id="recordProfessor" type="text" /></label>
+      <label>Turma <input id="recordTurma" type="text" /></label>
+      <label>Sala <input id="recordSala" type="text" /></label>
+      <label>Prompt de análise <textarea id="recordPrompt" rows="12"></textarea></label>
+      <div class="row">
+        <button id="startRecording">Iniciar gravação</button>
+        <button id="stopAndAnalyze">Encerrar e analisar aula</button>
+      </div>
+      <p id="recordStatus" class="status"></p>
+    </section>
+
+    <section id="upload" class="panel">
+      <label>Upload do vídeo <input id="uploadVideo" type="file" accept=".mp4,.mov,.avi" /></label>
+      <label>Professor <input id="uploadProfessor" type="text" /></label>
+      <label>Turma <input id="uploadTurma" type="text" /></label>
+      <label>Sala <input id="uploadSala" type="text" /></label>
+      <label>Prompt de análise <textarea id="uploadPrompt" rows="12"></textarea></label>
+      <button id="analyzeUpload">Analisar vídeo enviado</button>
+      <p id="uploadStatus" class="status"></p>
+    </section>
+
+    <section>
+      <h2>Relatório</h2>
+      <pre id="reportBox">Nenhuma análise executada.</pre>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
