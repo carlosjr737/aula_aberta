@@ -25,7 +25,7 @@ async function loadDefaultPrompt() {
   const resp = await fetch('/api/default-prompt');
   const data = await resp.json();
   document.getElementById('recordPrompt').value = data.defaultPrompt;
-  document.getElementById('uploadPrompt').value = data.defaultPrompt;
+  document.getElementById('drivePrompt').value = data.defaultPrompt;
 }
 
 document.getElementById('startRecording').addEventListener('click', async () => {
@@ -40,33 +40,40 @@ document.getElementById('stopAndAnalyze').addEventListener('click', async () => 
     return;
   }
 
-  setStatus('recordStatus', 'Gravação RTSP indisponível neste deploy. Priorize a aba "Enviar vídeo".');
+  setStatus('recordStatus', 'Gravação RTSP indisponível neste deploy. Use a aba "Analisar por Drive".');
   currentRecording = null;
 });
 
-document.getElementById('analyzeUpload').addEventListener('click', async () => {
-  const file = document.getElementById('uploadVideo').files[0];
-  if (!file) {
-    setStatus('uploadStatus', 'Selecione um vídeo.');
+
+
+document.getElementById('analyzeDrive').addEventListener('click', async () => {
+  const driveUrl = document.getElementById('driveUrl').value.trim();
+  if (!driveUrl) {
+    setStatus('driveStatus', 'Informe o link do Google Drive.');
     return;
   }
 
-  setStatus('uploadStatus', 'Enviando vídeo e analisando...');
-  const form = new FormData();
-  form.append('video', file);
-  form.append('professor', document.getElementById('uploadProfessor').value);
-  form.append('turma', document.getElementById('uploadTurma').value);
-  form.append('sala', document.getElementById('uploadSala').value);
-  form.append('customPrompt', document.getElementById('uploadPrompt').value);
+  setStatus('driveStatus', 'Baixando vídeo do Drive e analisando...');
 
-  const resp = await fetch('/api/analyze/upload', { method: 'POST', body: form });
+  const resp = await fetch('/api/analyze/drive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      driveUrl,
+      professor: document.getElementById('driveProfessor').value,
+      turma: document.getElementById('driveTurma').value,
+      sala: document.getElementById('driveSala').value,
+      prompt: document.getElementById('drivePrompt').value
+    })
+  });
+
   const data = await resp.json();
   if (!resp.ok) {
-    setStatus('uploadStatus', data.error || 'Falha no upload/análise.');
+    setStatus('driveStatus', data.error || 'Falha ao analisar vídeo do Drive.');
     return;
   }
 
-  setStatus('uploadStatus', `Relatório gerado: ${data.reportId}`);
+  setStatus('driveStatus', `Análise concluída (${data.fileSizeMB} MB).`);
   showReport(data);
 });
 
