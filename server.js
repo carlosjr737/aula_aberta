@@ -59,6 +59,48 @@ function getFileMimeType(filePath) {
   return mimeByExt[ext] || 'application/octet-stream';
 }
 
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForGeminiFileActive(fileName) {
+  const maxAttempts = 30;
+
+  for (let attempts = 0; attempts < maxAttempts; attempts += 1) {
+    const fileInfoResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${process.env.GEMINI_API_KEY}`);
+    const fileInfoData = await fileInfoResp.json();
+
+    if (!fileInfoResp.ok) {
+      const error = new Error(fileInfoData?.error?.message || 'Falha ao consultar status do arquivo na Gemini Files API.');
+      error.statusCode = 500;
+      throw error;
+    }
+
+    const state = fileInfoData?.state;
+    if (state === 'ACTIVE') {
+      return fileInfoData;
+    }
+
+    if (state === 'FAILED') {
+      const error = new Error('Falha ao processar vídeo na Gemini Files API');
+      error.statusCode = 500;
+      throw error;
+    }
+
+    if (state === 'PROCESSING') {
+      await sleep(2000);
+      continue;
+    }
+
+    await sleep(2000);
+  }
+
+  const timeoutError = new Error('Vídeo ainda está processando na Gemini Files API. Tente novamente em alguns segundos.');
+  timeoutError.statusCode = 408;
+  throw timeoutError;
+}
+
 async function uploadToGeminiFiles(filePath) {
   const mimeType = getFileMimeType(filePath);
   const fileBuffer = fs.readFileSync(filePath);
@@ -81,14 +123,16 @@ async function uploadToGeminiFiles(filePath) {
     throw error;
   }
 
+  const fileName = uploadPayload?.file?.name;
   const fileUri = uploadPayload?.file?.uri;
-  if (!fileUri) {
-    const error = new Error('Gemini Files API não retornou URI do arquivo.');
+  if (!fileUri || !fileName) {
+    const error = new Error('Gemini Files API não retornou name/uri do arquivo.');
     error.statusCode = 500;
     throw error;
   }
 
-  return { fileUri, mimeType };
+  const activeFile = await waitForGeminiFileActive(fileName);
+  return { fileUri: activeFile.uri || fileUri, mimeType };
 }
 
 async function analyzeVideo(filePath, metadata, customPrompt) {
