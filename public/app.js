@@ -30,12 +30,8 @@ async function loadDefaultPrompt() {
 
 document.getElementById('startRecording').addEventListener('click', async () => {
   const rtspUrl = document.getElementById('rtspUrl').value.trim();
-  currentRecording = {
-    rtspUrl,
-    startedAt: new Date().toISOString(),
-    simulatedFilePath: `uploads/recorded_${Date.now()}.mp4`
-  };
-  setStatus('recordStatus', `Gravação iniciada (simulada). Origem: ${rtspUrl || 'sem RTSP'}`);
+  currentRecording = { rtspUrl, startedAt: new Date().toISOString() };
+  setStatus('recordStatus', 'Fluxo RTSP desabilitado neste MVP em ambiente Vercel. Use backend local/Railway/Render.');
 });
 
 document.getElementById('stopAndAnalyze').addEventListener('click', async () => {
@@ -44,29 +40,7 @@ document.getElementById('stopAndAnalyze').addEventListener('click', async () => 
     return;
   }
 
-  setStatus('recordStatus', 'Encerrando gravação e enviando para análise...');
-  const body = {
-    rtspUrl: currentRecording.rtspUrl,
-    filePath: currentRecording.simulatedFilePath,
-    professor: document.getElementById('recordProfessor').value,
-    turma: document.getElementById('recordTurma').value,
-    sala: document.getElementById('recordSala').value,
-    customPrompt: document.getElementById('recordPrompt').value
-  };
-
-  const resp = await fetch('/api/analyze/recorded', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const data = await resp.json();
-  if (!resp.ok) {
-    setStatus('recordStatus', data.error || 'Falha ao analisar gravação.');
-    return;
-  }
-
-  setStatus('recordStatus', `Relatório gerado: ${data.reportId}`);
-  showReport(data);
+  setStatus('recordStatus', 'Gravação RTSP indisponível neste deploy. Priorize a aba "Enviar vídeo".');
   currentRecording = null;
 });
 

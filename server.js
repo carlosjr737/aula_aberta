@@ -162,6 +162,7 @@ app.get('/api/default-prompt', (_req, res) => {
 });
 
 app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
+  let fileInfo = { fileExists: false, fileSizeBytes: 0, fileSizeMB: 0 };
   try {
     ensureStorageDirs();
 
@@ -176,7 +177,7 @@ app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
     };
     const customPrompt = req.body.customPrompt || DEFAULT_PROMPT;
 
-    const fileInfo = getFileInspection(req.file.path);
+    fileInfo = getFileInspection(req.file.path);
     if (!fileInfo.fileExists || fileInfo.fileSizeBytes <= MIN_FILE_SIZE_BYTES) {
       return res.status(400).json({
         error: 'Arquivo de vídeo inválido. O arquivo deve existir e ter tamanho maior que 1MB.',
@@ -204,6 +205,8 @@ app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
     const statusCode = error.statusCode || 400;
     res.status(statusCode).json({
       error: error.message || 'Erro ao processar upload',
+      fileExists: fileInfo.fileExists,
+      fileSizeMB: fileInfo.fileSizeMB,
       usedRealAI: false,
       provider: 'gemini'
     });
@@ -211,44 +214,13 @@ app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
 });
 
 app.post('/api/analyze/recorded', async (req, res) => {
-  try {
-    ensureStorageDirs();
-
-    const { filePath } = req.body;
-
-    if (!filePath) {
-      return res.status(400).json({ error: 'filePath não informado' });
-    }
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(400).json({ error: 'Arquivo não encontrado', filePath });
-    }
-
-    const stats = fs.statSync(filePath);
-
-    if (stats.size < 100000) {
-      return res.status(400).json({
-        error: 'Arquivo muito pequeno',
-        size: stats.size
-      });
-    }
-
-    console.log('Arquivo:', filePath);
-    console.log('Tamanho:', stats.size);
-
-    return res.json({
-      fileExists: true,
-      fileSizeMB: (stats.size / 1024 / 1024).toFixed(2),
-      usedRealAI: false
-    });
-  } catch (error) {
-    console.error('Erro detalhado:', error);
-    return res.status(500).json({
-      error: 'Erro interno',
-      message: error.message,
-      stack: error.stack
-    });
-  }
+  return res.status(400).json({
+    error: 'Gravação RTSP não é suportada de forma confiável na Vercel. Use esta função apenas em backend local/Railway/Render.',
+    fileExists: false,
+    fileSizeMB: 0,
+    usedRealAI: false,
+    provider: 'gemini'
+  });
 });
 
 app.listen(port, () => {
