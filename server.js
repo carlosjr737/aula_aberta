@@ -214,44 +214,39 @@ app.post('/api/analyze/recorded', async (req, res) => {
   try {
     ensureStorageDirs();
 
-    const { rtspUrl, filePath, professor, turma, sala, customPrompt } = req.body;
-    const resolvedFile = filePath ? path.join(RECORDINGS_DIR, path.basename(filePath)) : null;
+    const { filePath } = req.body;
 
-    if (!resolvedFile) {
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath não informado' });
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(400).json({ error: 'Arquivo não encontrado', filePath });
+    }
+
+    const stats = fs.statSync(filePath);
+
+    if (stats.size < 100000) {
       return res.status(400).json({
-        error: 'filePath é obrigatório neste MVP para o fluxo de gravação (simulação após encerrar gravação).'
+        error: 'Arquivo muito pequeno',
+        size: stats.size
       });
     }
 
-    const fileInfo = getFileInspection(resolvedFile);
-    if (!fileInfo.fileExists || fileInfo.fileSizeBytes <= MIN_FILE_SIZE_BYTES) {
-      return res.status(400).json({
-        error: 'Arquivo de vídeo inválido. O arquivo deve existir e ter tamanho maior que 1MB.',
-        fileExists: fileInfo.fileExists,
-        fileSizeMB: fileInfo.fileSizeMB,
-        usedRealAI: false,
-        provider: 'gemini'
-      });
-    }
+    console.log('Arquivo:', filePath);
+    console.log('Tamanho:', stats.size);
 
-    const metadata = { professor: professor || '', turma: turma || '', sala: sala || '', rtspUrl: rtspUrl || '' };
-    const report = await analyzeVideo(resolvedFile, metadata, customPrompt || DEFAULT_PROMPT);
-    const { reportId, outputPath } = await persistReport(report);
-
-    res.json({
-      reportId,
-      report,
-      reportFile: path.relative(__dirname, outputPath),
-      fileExists: fileInfo.fileExists,
-      fileSizeMB: fileInfo.fileSizeMB,
-      usedRealAI: true,
-      provider: 'gemini'
+    return res.json({
+      fileExists: true,
+      fileSizeMB: (stats.size / 1024 / 1024).toFixed(2),
+      usedRealAI: false
     });
   } catch (error) {
-    res.status(error.statusCode || 400).json({
-      error: error.message || 'Falha ao analisar gravação.',
-      usedRealAI: false,
-      provider: 'gemini'
+    console.error('Erro detalhado:', error);
+    return res.status(500).json({
+      error: 'Erro interno',
+      message: error.message,
+      stack: error.stack
     });
   }
 });
