@@ -80,26 +80,56 @@ const upload = multer({
   }
 });
 
-async function analyzeVideo(filePath, metadata, customPrompt) {
-  if (!process.env.GEMINI_API_KEY) {
-    const error = new Error('GEMINI_API_KEY não configurada. A análise real não foi executada.');
-    error.statusCode = 500;
-    throw error;
-  }
-
+function getFileMimeType(filePath) {
   const mimeByExt = {
     '.mp4': 'video/mp4',
     '.mov': 'video/quicktime',
     '.avi': 'video/x-msvideo'
   };
   const ext = path.extname(filePath).toLowerCase();
-  const mimeType = mimeByExt[ext] || 'application/octet-stream';
-  const videoBuffer = fs.readFileSync(filePath);
-  const fileBase64 = videoBuffer.toString('base64');
+  return mimeByExt[ext] || 'application/octet-stream';
+}
 
-  console.log(`Vídeo recebido: ${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB`);
-  console.log('Enviando para Gemini...');
+async function uploadToGeminiFiles(filePath) {
+  const mimeType = getFileMimeType(filePath);
+  const fileBuffer = fs.readFileSync(filePath);
 
+  const uploadEndpoint = `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${process.env.GEMINI_API_KEY}`;
+  const uploadResponse = await fetch(uploadEndpoint, {
+    method: 'POST',
+    headers: {
+      'X-Goog-Upload-Protocol': 'raw',
+      'X-Goog-Upload-File-Name': path.basename(filePath),
+      'Content-Type': mimeType
+    },
+    body: fileBuffer
+  });
+
+  const uploadPayload = await uploadResponse.json();
+  if (!uploadResponse.ok) {
+    const error = new Error(uploadPayload?.error?.message || 'Falha ao enviar arquivo para Gemini Files API.');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const fileUri = uploadPayload?.file?.uri;
+  if (!fileUri) {
+    const error = new Error('Gemini Files API não retornou URI do arquivo.');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  return { fileUri, mimeType };
+}
+
+async function analyzeVideo(filePath, metadata, customPrompt) {
+  if (!process.env.GEMINI_API_KEY) {
+    const error = new Error('GEMINI_API_KEY não configurada. Análise real não executada.');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const { fileUri, mimeType } = await uploadToGeminiFiles(filePath);
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`;
   const geminiResponse = await fetch(endpoint, {
     method: 'POST',
@@ -110,7 +140,7 @@ async function analyzeVideo(filePath, metadata, customPrompt) {
           role: 'user',
           parts: [
             { text: `${customPrompt}\n\nMetadata da aula: ${JSON.stringify(metadata)}` },
-            { inlineData: { mimeType, data: fileBase64 } }
+            { fileData: { mimeType, fileUri } }
           ]
         }
       ]
@@ -130,7 +160,6 @@ async function analyzeVideo(filePath, metadata, customPrompt) {
     error.statusCode = 500;
     throw error;
   }
-  console.log('Resposta Gemini recebida.');
 
   return {
     provider: 'gemini',
@@ -147,6 +176,43 @@ function getFileInspection(filePath) {
   const fileSizeBytes = fileExists ? fs.statSync(filePath).size : 0;
   const fileSizeMB = Number((fileSizeBytes / (1024 * 1024)).toFixed(2));
   return { fileExists, fileSizeBytes, fileSizeMB };
+}
+
+function extractDriveFileId(driveUrl) {
+  const url = new URL(driveUrl);
+  const idFromQuery = url.searchParams.get('id');
+  if (idFromQuery) return idFromQuery;
+
+  const patterns = [/\/d\/([a-zA-Z0-9_-]+)/, /\/file\/d\/([a-zA-Z0-9_-]+)/];
+  for (const pattern of patterns) {
+    const match = driveUrl.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+async function downloadDriveFile(driveUrl) {
+  const fileId = extractDriveFileId(driveUrl);
+  if (!fileId) {
+    const error = new Error('Link do Google Drive inválido. Não foi possível extrair o fileId.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+  const tmpPath = path.join('/tmp', `drive_video_${Date.now()}_${fileId}.mp4`);
+
+  const response = await fetch(downloadUrl);
+  if (!response.ok) {
+    const error = new Error('Falha ao baixar arquivo do Google Drive. Verifique permissões do link.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  fs.writeFileSync(tmpPath, Buffer.from(arrayBuffer));
+  return tmpPath;
 }
 
 async function persistReport(report) {
@@ -210,6 +276,58 @@ app.post('/api/analyze/upload', upload.single('video'), async (req, res) => {
       usedRealAI: false,
       provider: 'gemini'
     });
+  }
+});
+
+app.post('/api/analyze/drive', async (req, res) => {
+  let fileInfo = { fileExists: false, fileSizeBytes: 0, fileSizeMB: 0 };
+  let tempFilePath = null;
+
+  try {
+    const { driveUrl, professor = '', turma = '', sala = '', prompt } = req.body;
+    const customPrompt = prompt || DEFAULT_PROMPT;
+
+    if (!driveUrl) {
+      return res.status(400).json({ error: 'driveUrl é obrigatório.' });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY não configurada. Análise real não executada.' });
+    }
+
+    tempFilePath = await downloadDriveFile(driveUrl);
+    fileInfo = getFileInspection(tempFilePath);
+
+    if (!fileInfo.fileExists || fileInfo.fileSizeBytes <= MIN_FILE_SIZE_BYTES) {
+      return res.status(400).json({
+        error: 'Arquivo de vídeo inválido. O arquivo deve existir e ter tamanho maior que 1MB.',
+        fileExists: fileInfo.fileExists,
+        fileSizeMB: fileInfo.fileSizeMB,
+        usedRealAI: false,
+        provider: 'gemini'
+      });
+    }
+
+    const metadata = { professor, turma, sala, driveUrl };
+    const report = await analyzeVideo(tempFilePath, metadata, customPrompt);
+
+    return res.json({
+      fileSizeMB: fileInfo.fileSizeMB,
+      usedRealAI: true,
+      provider: 'gemini',
+      report
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.message || 'Erro ao analisar vídeo do Drive.',
+      fileSizeMB: fileInfo.fileSizeMB,
+      usedRealAI: false,
+      provider: 'gemini'
+    });
+  } finally {
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
   }
 });
 

@@ -13,6 +13,7 @@
     <div class="tabs">
       <button class="tab active" data-tab="record">Gravar aula</button>
       <button class="tab" data-tab="upload">Enviar vídeo</button>
+      <button class="tab" data-tab="drive">Analisar por Drive</button>
     </div>
 
     <section id="record" class="panel active">
@@ -37,6 +38,18 @@
       <label>Prompt de análise <textarea id="uploadPrompt" rows="12"></textarea></label>
       <button id="analyzeUpload">Analisar vídeo enviado</button>
       <p id="uploadStatus" class="status"></p>
+    </section>
+
+
+
+    <section id="drive" class="panel">
+      <label>Link do Google Drive <input id="driveUrl" type="text" placeholder="https://drive.google.com/file/d/.../view" /></label>
+      <label>Professor <input id="driveProfessor" type="text" /></label>
+      <label>Turma <input id="driveTurma" type="text" /></label>
+      <label>Sala <input id="driveSala" type="text" /></label>
+      <label>Prompt de análise <textarea id="drivePrompt" rows="12"></textarea></label>
+      <button id="analyzeDrive">Analisar vídeo do Drive</button>
+      <p id="driveStatus" class="status"></p>
     </section>
 
     <section>
