@@ -12,7 +12,6 @@
 
     <div class="tabs">
       <button class="tab active" data-tab="record">Gravar aula</button>
-      <button class="tab" data-tab="upload">Enviar vídeo</button>
       <button class="tab" data-tab="drive">Analisar por Drive</button>
     </div>
 
@@ -30,14 +29,15 @@
       <p id="recordStatus" class="status"></p>
     </section>
 
-    <section id="upload" class="panel">
-      <label>Upload do vídeo <input id="uploadVideo" type="file" accept=".mp4,.mov,.avi" /></label>
-      <label>Professor <input id="uploadProfessor" type="text" /></label>
-      <label>Turma <input id="uploadTurma" type="text" /></label>
-      <label>Sala <input id="uploadSala" type="text" /></label>
-      <label>Prompt de análise <textarea id="uploadPrompt" rows="12"></textarea></label>
-      <button id="analyzeUpload">Analisar vídeo enviado</button>
-      <p id="uploadStatus" class="status"></p>
+
+    <section id="drive" class="panel">
+      <label>Link do Google Drive <input id="driveUrl" type="text" placeholder="https://drive.google.com/file/d/.../view" /></label>
+      <label>Professor <input id="driveProfessor" type="text" /></label>
+      <label>Turma <input id="driveTurma" type="text" /></label>
+      <label>Sala <input id="driveSala" type="text" /></label>
+      <label>Prompt de análise <textarea id="drivePrompt" rows="12"></textarea></label>
+      <button id="analyzeDrive">Analisar vídeo do Drive</button>
+      <p id="driveStatus" class="status"></p>
     </section>
 
 
