@@ -96,9 +96,11 @@ async function waitForGeminiFileActive(fileName) {
     await sleep(2000);
   }
 
+
   const timeoutError = new Error('Vídeo ainda está processando na Gemini Files API. Tente novamente em alguns segundos.');
   timeoutError.statusCode = 408;
   throw timeoutError;
+
 }
 
 async function uploadToGeminiFiles(filePath) {
@@ -123,13 +125,16 @@ async function uploadToGeminiFiles(filePath) {
     throw error;
   }
 
+
   const fileName = uploadPayload?.file?.name;
   const fileUri = uploadPayload?.file?.uri;
   if (!fileUri || !fileName) {
     const error = new Error('Gemini Files API não retornou name/uri do arquivo.');
+
     error.statusCode = 500;
     throw error;
   }
+
 
   const activeFile = await waitForGeminiFileActive(fileName);
   return { fileUri: activeFile.uri || fileUri, mimeType };
@@ -143,6 +148,7 @@ async function analyzeVideo(filePath, metadata, customPrompt) {
   }
 
   const { fileUri, mimeType } = await uploadToGeminiFiles(filePath);
+
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
   const geminiResponse = await fetch(endpoint, {
     method: 'POST',
@@ -192,6 +198,7 @@ function getFileInspection(filePath) {
 }
 
 function extractDriveFileId(driveUrl) {
+
   if (!driveUrl || typeof driveUrl !== 'string') return null;
 
   try {
@@ -209,6 +216,7 @@ function extractDriveFileId(driveUrl) {
     /\bid=([a-zA-Z0-9_-]+)/
   ];
 
+
   for (const pattern of patterns) {
     const match = driveUrl.match(pattern);
     if (match?.[1]) return match[1];
@@ -216,6 +224,7 @@ function extractDriveFileId(driveUrl) {
 
   return null;
 }
+
 
 
 function parseSetCookie(headers) {
@@ -245,6 +254,7 @@ function isVideoContentType(contentType) {
   return typeof contentType === 'string' && contentType.toLowerCase().startsWith('video/');
 }
 
+
 async function downloadDriveFile(driveUrl) {
   const fileId = extractDriveFileId(driveUrl);
   if (!fileId) {
@@ -253,15 +263,18 @@ async function downloadDriveFile(driveUrl) {
     throw error;
   }
 
+
   const baseDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
   const tmpPath = path.join('/tmp', `drive_video_${Date.now()}_${fileId}.mp4`);
 
   const firstResponse = await fetch(baseDownloadUrl, { redirect: 'follow' });
   if (!firstResponse.ok) {
+
     const error = new Error('Falha ao baixar arquivo do Google Drive. Verifique permissões do link.');
     error.statusCode = 400;
     throw error;
   }
+
 
   const firstContentType = firstResponse.headers.get('content-type') || '';
 
@@ -300,12 +313,65 @@ async function downloadDriveFile(driveUrl) {
   const arrayBuffer = await downloadResponse.arrayBuffer();
   fs.writeFileSync(tmpPath, Buffer.from(arrayBuffer));
   return tmpPath;
+
 }
 
 app.get('/api/default-prompt', (_req, res) => {
   res.json({ defaultPrompt: DEFAULT_PROMPT });
 });
 
+
+app.post('/api/analyze/drive', async (req, res) => {
+  let fileInfo = { fileExists: false, fileSizeBytes: 0, fileSizeMB: 0 };
+  let tempFilePath = null;
+
+  try {
+    const { driveUrl, professor = '', turma = '', sala = '', prompt } = req.body;
+    const customPrompt = prompt || DEFAULT_PROMPT;
+
+    if (!driveUrl) {
+      return res.status(400).json({ error: 'driveUrl é obrigatório.' });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY não configurada. Análise real não executada.' });
+    }
+
+    tempFilePath = await downloadDriveFile(driveUrl);
+    fileInfo = getFileInspection(tempFilePath);
+
+    if (!fileInfo.fileExists || fileInfo.fileSizeBytes <= MIN_FILE_SIZE_BYTES) {
+      return res.status(400).json({
+        error: 'Arquivo de vídeo inválido. O arquivo deve existir e ter tamanho maior que 1MB.',
+        fileExists: fileInfo.fileExists,
+        fileSizeMB: fileInfo.fileSizeMB,
+        usedRealAI: false,
+        provider: 'gemini'
+      });
+    }
+
+    const metadata = { professor, turma, sala, driveUrl };
+    const report = await analyzeVideo(tempFilePath, metadata, customPrompt);
+
+    return res.json({
+      fileSizeMB: fileInfo.fileSizeMB,
+      usedRealAI: true,
+      provider: 'gemini',
+      report
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.message || 'Erro ao analisar vídeo do Drive.',
+      fileSizeMB: fileInfo.fileSizeMB,
+      usedRealAI: false,
+      provider: 'gemini'
+    });
+  } finally {
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+  }
+});
 
 app.post('/api/analyze/drive', async (req, res) => {
   let fileInfo = { fileExists: false, fileSizeBytes: 0, fileSizeMB: 0 };
