@@ -113,13 +113,49 @@ async function uploadToGeminiFiles(filePath) {
   }
 
   const fileUri = uploadPayload?.file?.uri;
-  if (!fileUri) {
-    const error = new Error('Gemini Files API não retornou URI do arquivo.');
+  const fileName = uploadPayload?.file?.name;
+  if (!fileUri || !fileName) {
+    const error = new Error('Gemini Files API não retornou URI ou nome do arquivo.');
     error.statusCode = 500;
     throw error;
   }
 
-  return { fileUri, mimeType };
+  return { fileUri, fileName, mimeType };
+}
+
+async function waitForFileActive(fileName) {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${process.env.GEMINI_API_KEY}`;
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const fileResponse = await fetch(endpoint);
+    const filePayload = await fileResponse.json();
+
+    if (!fileResponse.ok) {
+      const error = new Error(filePayload?.error?.message || 'Falha ao consultar status do arquivo na Gemini Files API.');
+      error.statusCode = 500;
+      throw error;
+    }
+
+    const state = filePayload?.state;
+    if (state === 'ACTIVE') return;
+    if (state === 'FAILED') {
+      const error = new Error('Falha ao processar vídeo na Gemini Files API.');
+      error.statusCode = 500;
+      throw error;
+    }
+
+    if (state !== 'PROCESSING') {
+      const error = new Error(`Estado inesperado do arquivo na Gemini Files API: ${state || 'desconhecido'}.`);
+      error.statusCode = 500;
+      throw error;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  const error = new Error('Timeout: vídeo ainda processando na Gemini Files API.');
+  error.statusCode = 504;
+  throw error;
 }
 
 async function analyzeVideo(filePath, metadata, customPrompt) {
@@ -129,7 +165,8 @@ async function analyzeVideo(filePath, metadata, customPrompt) {
     throw error;
   }
 
-  const { fileUri, mimeType } = await uploadToGeminiFiles(filePath);
+  const { fileUri, fileName, mimeType } = await uploadToGeminiFiles(filePath);
+  await waitForFileActive(fileName);
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
   const geminiResponse = await fetch(endpoint, {
     method: 'POST',
