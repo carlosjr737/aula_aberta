@@ -173,6 +173,34 @@ function extractDriveFileId(driveUrl) {
   return null;
 }
 
+
+function parseSetCookie(headers) {
+  const rawCookies = headers.get('set-cookie') || '';
+  return rawCookies
+    .split(/,(?=\s*[^;]+=[^;]+)/)
+    .map((cookie) => cookie.split(';')[0].trim())
+    .filter(Boolean)
+    .join('; ');
+}
+
+function extractConfirmTokenFromHtml(html) {
+  const patterns = [
+    /confirm=([0-9A-Za-z_\-]+)/,
+    /name="confirm"\s+value="([0-9A-Za-z_\-]+)"/
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+function isVideoContentType(contentType) {
+  return typeof contentType === 'string' && contentType.toLowerCase().startsWith('video/');
+}
+
 async function downloadDriveFile(driveUrl) {
   const fileId = extractDriveFileId(driveUrl);
   if (!fileId) {
@@ -181,17 +209,51 @@ async function downloadDriveFile(driveUrl) {
     throw error;
   }
 
-  const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+  const baseDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
   const tmpPath = path.join('/tmp', `drive_video_${Date.now()}_${fileId}.mp4`);
 
-  const response = await fetch(downloadUrl);
-  if (!response.ok) {
+  const firstResponse = await fetch(baseDownloadUrl, { redirect: 'follow' });
+  if (!firstResponse.ok) {
     const error = new Error('Falha ao baixar arquivo do Google Drive. Verifique permissões do link.');
     error.statusCode = 400;
     throw error;
   }
 
-  const arrayBuffer = await response.arrayBuffer();
+  const firstContentType = firstResponse.headers.get('content-type') || '';
+
+  let downloadResponse = firstResponse;
+  if (firstContentType.toLowerCase().includes('text/html')) {
+    const html = await firstResponse.text();
+    const confirmToken = extractConfirmTokenFromHtml(html);
+    const cookieHeader = parseSetCookie(firstResponse.headers);
+
+    if (!confirmToken) {
+      const error = new Error('Google Drive retornou página de confirmação. Use um arquivo menor ou configure download autenticado.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const confirmUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=${confirmToken}`;
+    downloadResponse = await fetch(confirmUrl, {
+      redirect: 'follow',
+      headers: cookieHeader ? { Cookie: cookieHeader } : {}
+    });
+
+    if (!downloadResponse.ok) {
+      const error = new Error('Google Drive retornou página de confirmação. Use um arquivo menor ou configure download autenticado.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  const finalContentType = downloadResponse.headers.get('content-type') || '';
+  if (!isVideoContentType(finalContentType)) {
+    const error = new Error('Google Drive retornou página de confirmação. Use um arquivo menor ou configure download autenticado.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const arrayBuffer = await downloadResponse.arrayBuffer();
   fs.writeFileSync(tmpPath, Buffer.from(arrayBuffer));
   return tmpPath;
 }
